@@ -1,0 +1,156 @@
+- hosts: all
+  become: yes
+  vars:
+    opensrf_version: "3.0.0"
+    ejabberd_osrf_pass: "mypass"
+  tasks:
+  - name: Update all packages to the latest version
+    apt:
+      upgrade: dist
+  
+  - name: Install OpenSRF Dependencies
+    apt: name={{ item }} state=present
+    with_items:
+      - apache2 
+      - apache2-dev 
+      - autoconf
+      - automake
+      - build-essential
+      - check
+      - ejabberd
+      - less
+      - libapache2-mod-perl2
+      - libcache-memcached-perl
+      - libclass-dbi-abstractsearch-perl
+      - libclass-dbi-sqlite-perl
+      - libdatetime-format-builder-perl
+      - libdatetime-format-iso8601-perl 
+      - libdatetime-format-mail-perl
+      - libdatetime-perl
+      - libdatetime-timezone-perl
+      - liberror-perl
+      - libexpat1-dev
+      - libfile-find-rule-perl
+      - libgcrypt11-dev
+      - libgdbm-dev
+      - libjson-xs-perl
+      - liblog-log4perl-perl
+      - libmemcached-dev
+      - libmemcached-tools
+      - libmodule-build-perl
+      - libncurses5-dev
+      - libnet-dns-perl
+      - libnet-server-perl
+      - libperl-dev
+      - libreadline-dev
+      - libtemplate-perl
+      - libtest-pod-perl
+      - libtie-ixhash-perl
+      - libtool
+      - libuniversal-require-perl
+      - libunix-syslog-perl
+      - libwww-perl
+      - libxml2-dev
+      - libxml-libxml-perl
+      - libxml-libxslt-perl
+      - libxml-simple-perl
+      - libxslt1-dev
+      - make
+      - memcached
+      - pkg-config
+      - python-coverage
+      - psmisc
+      - python-dev
+      - python-libxml2
+      - python-memcache
+      - python-nose
+      - python-pyxmpp
+      - python-setuptools
+      - python-simplejson
+      - tar
+      - zlib1g-dev
+
+  - name: Enable SSL Apache Module
+    apache2_module:
+      state: present
+      name: ssl
+
+  - name: Create opensrf user
+    user:
+      name: opensrf
+      shell: /bin/bash
+      uid: 64050
+      generate_ssh_key: yes
+
+  - name: Download OpenSRF tarball
+    get_url:
+      url: https://evergreen-ils.org/downloads/opensrf-{{ opensrf_version }}.tar.gz
+      dest: /home/opensrf/opensrf-{{ opensrf_version }}.tar.gz
+
+  - name: Extract OpenSRF
+    unarchive:
+      src: /home/opensrf/opensrf-{{ opensrf_version }}.tar.gz
+      dest: /home/opensrf
+      remote_src: yes
+
+  - name: Configure OpenSRF
+    command: ./configure --prefix=/openils --sysconfdir=/openils/conf
+    args:
+      chdir: /home/opensrf/opensrf-{{ opensrf_version }}
+
+  - name: Build OpenSRF
+    make:
+      chdir: /home/opensrf/opensrf-{{ opensrf_version }}
+
+  - name: Install OpenSRF
+    make:
+      chdir: /home/opensrf/opensrf-{{ opensrf_version }}
+      target: install
+    become: yes
+
+  - name: Insert public.localhost into /etc/hosts
+    lineinfile:
+      path: /etc/hosts
+      insertafter: "127.0.1.1*"
+      line: "127.0.1.2       public.localhost        public"
+      
+  - name: Insert private.localhost into /etc/hosts
+    lineinfile:
+      path: /etc/hosts
+      insertafter: "127.0.1.2*"
+      line: "127.0.1.3       private.localhost       private"
+
+  - name: add /openils/bin to opensrf user's path
+    lineinfile:
+      path: /home/opensrf/.bashrc
+      line: "export PATH=$PATH:/openils/bin"
+
+  - name: Stop ejabberd
+    service:
+      name: ejabberd
+      state: stopped
+
+  - name: copy ejabberd.yml to host
+    copy:
+      src: templates/ejabberd.yml
+      dest: /etc/ejabberd/ejabberd.yml
+      owner: ejabberd
+      group: ejabberd
+      mode: 0600
+      backup: yes
+
+  - name: Start ejabberd
+    service:
+      name: ejabberd
+      state: started
+
+  - name: Register ejabberd users
+    shell: |
+      for user in opensrf router; do
+        for domain in public private; do
+          ejabberdctl register $user $domain.localhost {{ ejabberd_osrf_pass|quote }};
+        done;
+      done;
+    become: yes
+
+
